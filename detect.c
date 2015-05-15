@@ -1161,6 +1161,10 @@ int SigMatchSignatures(ThreadVars *th_v, DetectEngineCtx *de_ctx, DetectEngineTh
                 pflow->de_ctx_id = de_ctx->id;
                 GenericVarFree(pflow->flowvar);
                 pflow->flowvar = NULL;
+            } else if (pflow->flags & FLOW_DESTATE_RESET) {
+                pflow->flags &= ~FLOW_DESTATE_RESET;
+                /* reset because of tcp ssn reuse */
+                reset_de_state = 1;
             }
 
             /* set the iponly stuff */
@@ -4615,8 +4619,8 @@ static inline void SigMultilinePrint(int i, char *prefix)
 void SigTableList(const char *keyword)
 {
     size_t size = sizeof(sigmatch_table) / sizeof(SigTableElmt);
-
     size_t i;
+    char *proto_name;
 
     if (keyword == NULL) {
         printf("=====Supported keywords=====\n");
@@ -4641,8 +4645,8 @@ void SigTableList(const char *keyword)
                     printf("%s", sigmatch_table[i].desc);
                 }
                 /* Build feature */
-                printf(";%s;",
-                       AppLayerGetProtoName(sigmatch_table[i].alproto));
+                proto_name = AppLayerGetProtoName(sigmatch_table[i].alproto);
+                printf(";%s;", proto_name ? proto_name : "Unset");
                 PrintFeatureList(sigmatch_table[i].flags, ':');
                 printf(";");
                 if (sigmatch_table[i].url) {

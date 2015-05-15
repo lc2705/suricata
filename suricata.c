@@ -197,7 +197,7 @@ SC_ATOMIC_DECLARE(unsigned int, engine_stage);
 #define DEFAULT_MAX_PENDING_PACKETS 1024
 
 /** suricata engine control flags */
-uint8_t suricata_ctl_flags = 0;
+volatile uint8_t suricata_ctl_flags = 0;
 
 /** Run mode selected */
 int run_mode = RUNMODE_UNKNOWN;
@@ -2201,10 +2201,16 @@ int main(int argc, char **argv)
     NSS_NoDB_Init(NULL);
 #endif
 
+    if (suri.disabled_detect) {
+        /* disable raw reassembly */
+        (void)ConfSetFinal("stream.reassembly.raw", "false");
+    }
+
     PacketPoolInit(max_pending_packets);
     HostInitConfig(HOST_VERBOSE);
     if (suri.run_mode != RUNMODE_UNIX_SOCKET) {
         FlowInitConfig(FLOW_VERBOSE);
+        StreamTcpInitConfig(STREAM_VERBOSE);
     }
 
     DetectEngineCtx *de_ctx = NULL;
@@ -2227,9 +2233,6 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
     } else {
-        /* disable raw reassembly */
-        (void)ConfSetFinal("stream.reassembly.raw", "false");
-
         /* tell the app layer to consider only the log id */
         RegisterAppLayerGetActiveTxIdFunc(AppLayerTransactionGetActiveLogOnly);
     }
@@ -2289,7 +2292,6 @@ int main(int argc, char **argv)
         }
         /* Spawn the flow manager thread */
         FlowManagerThreadSpawn();
-        StreamTcpInitConfig(STREAM_VERBOSE);
 
         SCPerfSpawnThreads();
     }
