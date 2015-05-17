@@ -80,6 +80,8 @@ typedef struct SCACCtx_ {
     SC_AC_STATE_TYPE_U16 (*state_table_u16)[256];
     /* the all important memory hungry state_table */
     SC_AC_STATE_TYPE_U32 (*state_table_u32)[256];
+    /* depth of every state */ 
+    uint32_t *state_depth_table;
 
     /* goto_table, failure table and output table.  Needed to create state_table.
      * Will be freed, once we have created the state_table */
@@ -95,6 +97,7 @@ typedef struct SCACCtx_ {
 #ifdef __SC_CUDA_SUPPORT__
     CUdeviceptr state_table_u16_cuda;
     CUdeviceptr state_table_u32_cuda;
+    CUdeviceptr state_depth_table_cuda; 
 #endif /* __SC_CUDA_SUPPORT__ */
 } SCACCtx;
 
@@ -159,7 +162,7 @@ static inline void CudaBufferPacket(CudaThreadVars *ctv, Packet *p)
 
 #if __WORDSIZE==64
     CudaBufferSlice *slice = CudaBufferGetSlice(ctv->cuda_ac_cb,
-                                                p->payload_len + sizeof(uint64_t) + sizeof(CUdeviceptr),
+                                                p->payload_len + sizeof(uint64_t) + sizeof(CUdeviceptr) * 2,
                                                 (void *)p);
     if (slice == NULL) {
         SCLogError(SC_ERR_FATAL, "Error retrieving slice.  Please report "
@@ -169,10 +172,11 @@ static inline void CudaBufferPacket(CudaThreadVars *ctv, Packet *p)
     }
     *((uint64_t *)(slice->buffer + slice->start_offset)) = p->payload_len;
     *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint64_t))) = ((SCACCtx *)(mpm_ctx->ctx))->state_table_u32_cuda;
-    memcpy(slice->buffer + slice->start_offset + sizeof(uint64_t) + sizeof(CUdeviceptr), p->payload, p->payload_len);
+    *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint64_t) * 2)) = ((SCACCtx *)(mpm_ctx->ctx))->state_depth_table_cuda;
+	memcpy(slice->buffer + slice->start_offset + sizeof(uint64_t) + sizeof(CUdeviceptr), p->payload, p->payload_len);
 #else
     CudaBufferSlice *slice = CudaBufferGetSlice(ctv->cuda_ac_cb,
-                                                p->payload_len + sizeof(uint32_t) + sizeof(CUdeviceptr),
+                                                p->payload_len + sizeof(uint32_t) + sizeof(CUdeviceptr) * 2,
                                                 (void *)p);
     if (slice == NULL) {
         SCLogError(SC_ERR_FATAL, "Error retrieving slice.  Please report "
@@ -182,7 +186,8 @@ static inline void CudaBufferPacket(CudaThreadVars *ctv, Packet *p)
     }
     *((uint32_t *)(slice->buffer + slice->start_offset)) = p->payload_len;
     *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint32_t))) = ((SCACCtx *)(mpm_ctx->ctx))->state_table_u32_cuda;
-    memcpy(slice->buffer + slice->start_offset + sizeof(uint32_t) + sizeof(CUdeviceptr), p->payload, p->payload_len);
+    *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint32_t) * 2)) = ((SCACCtx *)(mpm_ctx->ctx))->state_depth_table_cuda;
+	memcpy(slice->buffer + slice->start_offset + sizeof(uint32_t) + sizeof(CUdeviceptr), p->payload, p->payload_len);
 #endif
     p->cuda_pkt_vars.cuda_mpm_enabled = 1;
     SC_ATOMIC_SET(slice->done, 1);
