@@ -390,9 +390,8 @@ static inline int SCACInitNewState(MpmCtx *mpm_ctx)
         SCLogError(SC_ERR_MEM_ALLOC, "Error allocating memory");
         exit(EXIT_FAILURE);
     }
-	
-	ctx->goto_table = ptmp;
-	
+    ctx->goto_table = ptmp;
+
     /* set all transitions for the newly assigned state as FAIL transitions */
     for (ascii_code = 0; ascii_code < 256; ascii_code++) {
         ctx->goto_table[ctx->state_count][ascii_code] = SC_AC_FAIL;
@@ -411,18 +410,6 @@ static inline int SCACInitNewState(MpmCtx *mpm_ctx)
 
     memset(ctx->output_table + ctx->state_count, 0, sizeof(SCACOutputTable));
 
-	/* reallocate space in the state depth table for the new state */
-	ptmp = SCRealloc(ctx->state_depth_table, size);
-	if (ptmp_depth == NULL)
-	{
-		SCFree(ctx->state_depth_table);
-		ctx->state_depth_table = NULL;
-		SCLogError(SC_ERR_MEM_ALLOC, "Error allocating memory");
-		exit(EXIT_FAILURE); 
-	} 
-	ctx->state_depth_table = ptmp;
-	ctx->state_depth_table[ctx->state_count] = 0;
-	
     /* \todo using it temporarily now during dev, since I have restricted
      *       state var in SCACCtx->state_table to uint16_t. */
     //if (ctx->state_count > 65536) {
@@ -503,7 +490,6 @@ static inline void SCACEnter(uint8_t *pattern, uint16_t pattern_len, uint32_t pi
     for (p = i; p < pattern_len; p++) {
         newstate = SCACInitNewState(mpm_ctx);
         ctx->goto_table[state][pattern[p]] = newstate;
-        ctx->state_depth_table[newstate] = ctx->state_depth_table[state] + 1;
         state = newstate;
     }
 
@@ -559,7 +545,6 @@ static inline void SCACDetermineLevel1Gap(MpmCtx *mpm_ctx)
         ctx->goto_table[0][u] = newstate;
     }
 
-	ctx->state_depth_table[0] = 0;
     return;
 }
 
@@ -1035,22 +1020,6 @@ int SCACPreparePatterns(MpmCtx *mpm_ctx)
             SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaMemcpyHtoD failure.");
             exit(EXIT_FAILURE);
         }
-        
-        r = SCCudaMemAlloc(&ctx->state_depth_table_cuda, ctx->state_count * sizeof(unsigned int));
-        if (r < 0)
-        {
-        	SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaMemAlloc failure.");
-        	exit(EXIT_FAILURE);
-        }
-        
-        r = SCCudaMemcpyHtoD(ctx->state_depth_table_cuda,
-							 ctx->state_depth_table,
-							 ctx->state_count * sizeof(unsigned int));
-		if (r < 0) {
-            SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaMemcpyHtoD failure.");
-            exit(EXIT_FAILURE);
-        }
-        
     }
 #endif
 
@@ -1183,7 +1152,7 @@ void SCACDestroyCtx(MpmCtx *mpm_ctx)
         SCFree(ctx->state_table_u16);
         ctx->state_table_u16 = NULL;
 
-        mpm_ctx->memory_cnt--;
+        mpm_ctx->memory_cnt++;
         mpm_ctx->memory_size -= (ctx->state_count *
                                  sizeof(SC_AC_STATE_TYPE_U16) * 256);
     }
@@ -1191,7 +1160,7 @@ void SCACDestroyCtx(MpmCtx *mpm_ctx)
         SCFree(ctx->state_table_u32);
         ctx->state_table_u32 = NULL;
 
-        mpm_ctx->memory_cnt--;
+        mpm_ctx->memory_cnt++;
         mpm_ctx->memory_size -= (ctx->state_count *
                                  sizeof(SC_AC_STATE_TYPE_U32) * 256);
     }
@@ -1204,12 +1173,6 @@ void SCACDestroyCtx(MpmCtx *mpm_ctx)
             }
         }
         SCFree(ctx->output_table);
-    }
-    
-    if(ctx->state_depth_table != NULL)
-    {
-    	SCFree(ctx->state_depth_table);
-    	ctx->state_depth_table = NULL;
     }
 
     if (ctx->pid_pat_list != NULL) {
@@ -1704,8 +1667,7 @@ void SCACConstructBoth16and32StateTables(void)
 /* \todo Reduce offset buffer size.  Probably a 100,000 entry would be sufficient. */
 static void *SCACCudaDispatcher(void *arg)
 {
-#define BLOCK_SIZE_X 32    //PACKET NUM
-#define BLOCK_SIZE_Y 4     //each packet is divided into 4 fragments 
+#define BLOCK_SIZE 32
 
     int r = 0;
     ThreadVars *tv = (ThreadVars *)arg;
@@ -1840,8 +1802,8 @@ static void *SCACCudaDispatcher(void *arg)
                          &cb_culled_info.no_of_items,
                          &cuda_g_u8_lowercasetable_d };
         r = SCCudaLaunchKernel(kernel,
-                               (cb_culled_info.no_of_items / BLOCK_SIZE_X) + 1, 1, 1,
-                               BLOCK_SIZE_X, BLOCK_SIZE_Y, 1,
+                               (cb_culled_info.no_of_items / BLOCK_SIZE) + 1, 1, 1,
+                               BLOCK_SIZE, 1, 1,
                                0, 0,
                                args, NULL);
         if (r < 0) {
@@ -1868,26 +1830,10 @@ static void *SCACCudaDispatcher(void *arg)
         uint32_t no_of_items = cb_culled_info.no_of_items;
         uint32_t *o_buffer = cb_data->o_buffer;
         uint32_t d_buffer_start_offset = cb_culled_info.d_buffer_start_offset;
-        
         for (uint32_t i = 0; i < no_of_items; i++, i_op_start_offset++) {
             Packet *p = (Packet *)cb_data->p_buffer[i_op_start_offset];
-            p->cuda_pkt_vars.cuda_gpu_matches = 0;
-            uint32_t plen = p->payload_len;
-            uint32_t flen = plen / BLOCK_SIZE_Y;
-            uint32_t matches = 0;
-            
-            for(uint32_t j = 0; j < BLOCK_SIZE_Y; j++)
-            {
-            	matches = cuda_results_buffer_h[((o_buffer[i_op_start_offset] - d_buffer_start_offset + j * flen) * 2)];
-            	if(matches == 0)
-            		continue;
-           		memcpy(p->cuda_pkt_vars.cuda_result + p->cuda_pkt_vars.cuda_gpu_matches,
-                       cuda_results_buffer_h + 
-                       ((o_buffer[i_op_start_offset] - d_buffer_start_offset + j * flen) * 2) + 1,
-					   matches * sizeof(uint32_t));
-            	p->cuda_pkt_vars.cuda_gpu_matches += matches;
-            }
-/*            p->cuda_pkt_vars.cuda_gpu_matches =
+
+            p->cuda_pkt_vars.cuda_gpu_matches =
                 cuda_results_buffer_h[((o_buffer[i_op_start_offset] - d_buffer_start_offset) * 2)];
             if (p->cuda_pkt_vars.cuda_gpu_matches != 0) {
                 memcpy(p->cuda_pkt_vars.cuda_results,
@@ -1896,7 +1842,7 @@ static void *SCACCudaDispatcher(void *arg)
                        (cuda_results_buffer_h[((o_buffer[i_op_start_offset] -
                                                 d_buffer_start_offset) * 2)] * sizeof(uint32_t)) + 4);
             }
-*/
+
             SCMutexLock(&p->cuda_pkt_vars.cuda_mutex);
             p->cuda_pkt_vars.cuda_done = 1;
             SCMutexUnlock(&p->cuda_pkt_vars.cuda_mutex);
@@ -1938,8 +1884,7 @@ static void *SCACCudaDispatcher(void *arg)
 
     return NULL;
 
-#undef BLOCK_SIZE_X
-#undef BLOCK_SIZE_Y
+#undef BLOCK_SIZE
 }
 
 uint32_t SCACCudaPacketResultsProcessing(Packet *p, MpmCtx *mpm_ctx,
@@ -1965,17 +1910,14 @@ uint32_t SCACCudaPacketResultsProcessing(Packet *p, MpmCtx *mpm_ctx,
         return 0;
 
     uint32_t matches = 0;
-    uint32_t *results = p->cuda_pkt_vars.cuda_results;
+    uint32_t *results = p->cuda_pkt_vars.cuda_results + 1;
     uint8_t *buf = p->payload;
     SCACCtx *ctx = mpm_ctx->ctx;
     SCACOutputTable *output_table = ctx->output_table;
     SCACPatternList *pid_pat_list = ctx->pid_pat_list;
 
-	uint32_t offset = 0;
     for (u = 0; u < cuda_matches; u += 2) {
-    	if(offset >= results[u])
-   		    continue;
-        offset = results[u];
+        uint32_t offset = results[u];
         uint32_t state = results[u + 1];
         /* we should technically be doing state & 0x00FFFFFF, but we don't
          * since the cuda kernel does that for us */

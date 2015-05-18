@@ -29,8 +29,6 @@
  *         shared memory/texture memory.
  */
 
-#define FRAGNUM 4
-
 extern "C"
 __global__ void SCACCudaSearch64(unsigned char *d_buffer,
                                  unsigned int d_buffer_start_offset,
@@ -40,49 +38,24 @@ __global__ void SCACCudaSearch64(unsigned char *d_buffer,
                                  unsigned char *tolower)
 {
     unsigned int u = 0;
-    unsigned int pid = blockIdx.x * blockDim.x + threadIdx.x;  //packet id
-    unsigned int fid = threadId.y; //fragment id
-    if (pid >= nop)
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= nop)
         return;
 
-    unsigned int buflen = *((unsigned long *)(d_buffer + (o_buffer[pid] - d_buffer_start_offset)));
+    unsigned int buflen = *((unsigned long *)(d_buffer + (o_buffer[tid] - d_buffer_start_offset)));
     unsigned int (*state_table_u32)[256] =
-        (unsigned int (*)[256])*((unsigned long *)(d_buffer + (o_buffer[pid] - d_buffer_start_offset) + 8));
-    unsigned int *state_depth_table = (unsigned int *)*((unsigned long *)(d_buffer + (o_buffer[pid] - d_buffer_start_offset) + 16));
-    unsigned char *buf = (d_buffer + (o_buffer[pid] - d_buffer_start_offset) + 24);
+        (unsigned int (*)[256])*((unsigned long *)(d_buffer + (o_buffer[tid] - d_buffer_start_offset) + 8));
+    unsigned char *buf = (d_buffer + (o_buffer[tid] - d_buffer_start_offset) + 16);
 
     unsigned int state = 0;
     unsigned int matches = 0;
-    unsigned int fraglen = buflen / FRAGNUM;
-    unsigned int fragbeg = fraglen * fid;
-    if(fid == FRAGNUM - 1)
-	fragend = buflen;
-    else
-        fragend = fragbeg + fraglen;
-
-    unsigned int *results = (results_buffer + ((o_buffer[pid] - d_buffer_start_offset) * 2) + fragbeg + 1);
-    for (u = fragbeg; u < fragend; u++) {
+    unsigned int *results = (results_buffer + ((o_buffer[tid] - d_buffer_start_offset) * 2) + 1);
+    for (u = 0; u < buflen; u++) {
         state = state_table_u32[state & 0x00FFFFFF][tolower[buf[u]]];
         if (state & 0xFF000000) {
             results[matches++] = u;
             results[matches++] = state & 0x00FFFFFF;
         }
-    }
-    if(fid != FRAGNUM - 1)
-    {
-	unsigned int distance = 0;
-        for( ; u < buflen;u++)
-	{
-	    state = state_table_u32[state & 0x00FFFFFF][tolower[buf[u]]];
-	    distance++;
-	    if(state_depth_table[state & 0x00FFFFFF] <= distance)
-		break;
-	    if(state & 0xFF000000)
-	    {
-	        result[matches++] = u;
-		result[matches++] = state & 0x00FFFFFF;
-	    }
-	}
     }
 
     *(results - 1) = matches;
@@ -98,8 +71,6 @@ __global__ void SCACCudaSearch32(unsigned char *d_buffer,
                                  unsigned char *tolower)
 {
     unsigned int u = 0;
-    unsigned int pid = blockIdx.x * blockDim.x + threadIdx.x;  //packet id
-    unsigned int fid = threadId.y; //fragment id
     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nop)
         return;
