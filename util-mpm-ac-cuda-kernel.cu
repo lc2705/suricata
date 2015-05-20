@@ -31,6 +31,7 @@
 
 #define FRAGNUM 4
 
+
 extern "C"
 __global__ void SCACCudaSearch64(unsigned char *d_buffer,
                                  unsigned int d_buffer_start_offset,
@@ -41,7 +42,7 @@ __global__ void SCACCudaSearch64(unsigned char *d_buffer,
 {
     unsigned int u = 0;
     unsigned int pid = blockIdx.x * blockDim.x + threadIdx.x;  //packet id
-    unsigned int fid = threadId.y; //fragment id
+    unsigned int fid = threadIdx.y; //fragment id
     if (pid >= nop)
         return;
 
@@ -55,12 +56,11 @@ __global__ void SCACCudaSearch64(unsigned char *d_buffer,
     unsigned int matches = 0;
     unsigned int fraglen = buflen / FRAGNUM;
     unsigned int fragbeg = fraglen * fid;
+    unsigned int fragend = fragbeg + fraglen;
     if(fid == FRAGNUM - 1)
-	fragend = buflen;
-    else
-        fragend = fragbeg + fraglen;
+	    fragend = buflen;
 
-    unsigned int *results = (results_buffer + ((o_buffer[pid] - d_buffer_start_offset) * 2) + fragbeg + 1);
+    unsigned int *results = (results_buffer + ((o_buffer[pid] - d_buffer_start_offset + fragbeg) * 2) + 1);
     for (u = fragbeg; u < fragend; u++) {
         state = state_table_u32[state & 0x00FFFFFF][tolower[buf[u]]];
         if (state & 0xFF000000) {
@@ -68,24 +68,34 @@ __global__ void SCACCudaSearch64(unsigned char *d_buffer,
             results[matches++] = state & 0x00FFFFFF;
         }
     }
-    if(fid != FRAGNUM - 1)
-    {
-	unsigned int distance = 0;
-        for( ; u < buflen;u++)
+
+    unsigned int distance = 0;
+    for( ; u < buflen;u++)
 	{
 	    state = state_table_u32[state & 0x00FFFFFF][tolower[buf[u]]];
 	    distance++;
 	    if(state_depth_table[state & 0x00FFFFFF] <= distance)
-		break;
+		    break;
 	    if(state & 0xFF000000)
 	    {
-	        result[matches++] = u;
-		result[matches++] = state & 0x00FFFFFF;
-	    }
+	        results[matches++] = u;
+		    results[matches++] = state & 0x00FFFFFF;
+	    } 
 	}
-    }
 
     *(results - 1) = matches;
+    
+/*    if(fid == FRAGNUM - 1)
+    {
+        unsigned int *res = results_buffer + ((o_buffer[pid] -  d_buffer_start_offset) * 2);   
+        for(unsigned int i = 0; i < buflen * 2 ; i++)
+        {
+            printf("%d ",res[i]);    
+        }
+        printf("\n");
+    }
+*/    
+    
     return;
 }
 
@@ -98,8 +108,6 @@ __global__ void SCACCudaSearch32(unsigned char *d_buffer,
                                  unsigned char *tolower)
 {
     unsigned int u = 0;
-    unsigned int pid = blockIdx.x * blockDim.x + threadIdx.x;  //packet id
-    unsigned int fid = threadId.y; //fragment id
     unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
     if (tid >= nop)
         return;

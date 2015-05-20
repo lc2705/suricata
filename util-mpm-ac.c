@@ -413,7 +413,7 @@ static inline int SCACInitNewState(MpmCtx *mpm_ctx)
 
 	/* reallocate space in the state depth table for the new state */
 	ptmp = SCRealloc(ctx->state_depth_table, size);
-	if (ptmp_depth == NULL)
+	if (ptmp == NULL)
 	{
 		SCFree(ctx->state_depth_table);
 		ctx->state_depth_table = NULL;
@@ -1833,6 +1833,8 @@ static void *SCACCudaDispatcher(void *arg)
             SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaMemcpyHtoD failure.");
             exit(EXIT_FAILURE);
         }
+
+        
         void *args[] = { &cuda_packets_buffer_d,
                          &cb_culled_info.d_buffer_start_offset,
                          &cuda_offset_buffer_d,
@@ -1848,13 +1850,11 @@ static void *SCACCudaDispatcher(void *arg)
             SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaLaunchKernel failure.");
             exit(EXIT_FAILURE);
         }
-        r = SCCudaMemcpyDtoHAsync(cuda_results_buffer_h, cuda_results_buffer_d, sizeof(uint32_t) * (cb_culled_info.d_buffer_len * 2), 0);
+        r = SCCudaMemcpyDtoHAsync(cuda_results_buffer_h, cuda_results_buffer_d, sizeof(uint32_t) * (cb_culled_info.d_buffer_len * 2),0);
         if (r < 0) {
             SCLogError(SC_ERR_AC_CUDA_ERROR, "SCCudaMemcpyDtoH failure.");
             exit(EXIT_FAILURE);
         }
-
-
 
         /**************** 1 SYNCHRO ****************/
         r = SCCudaCtxSynchronize();
@@ -1863,6 +1863,7 @@ static void *SCACCudaDispatcher(void *arg)
             exit(EXIT_FAILURE);
         }
 
+        
         /************* 1 Parse Results ************/
         uint32_t i_op_start_offset = cb_culled_info.op_buffer_start_offset;
         uint32_t no_of_items = cb_culled_info.no_of_items;
@@ -1881,7 +1882,7 @@ static void *SCACCudaDispatcher(void *arg)
             	matches = cuda_results_buffer_h[((o_buffer[i_op_start_offset] - d_buffer_start_offset + j * flen) * 2)];
             	if(matches == 0)
             		continue;
-           		memcpy(p->cuda_pkt_vars.cuda_result + p->cuda_pkt_vars.cuda_gpu_matches,
+           		memcpy(p->cuda_pkt_vars.cuda_results + p->cuda_pkt_vars.cuda_gpu_matches,
                        cuda_results_buffer_h + 
                        ((o_buffer[i_op_start_offset] - d_buffer_start_offset + j * flen) * 2) + 1,
 					   matches * sizeof(uint32_t));
@@ -1941,6 +1942,7 @@ static void *SCACCudaDispatcher(void *arg)
 #undef BLOCK_SIZE_X
 #undef BLOCK_SIZE_Y
 }
+
 
 uint32_t SCACCudaPacketResultsProcessing(Packet *p, MpmCtx *mpm_ctx,
                                           PatternMatcherQueue *pmq)
@@ -2027,6 +2029,8 @@ void SCACCudaStartDispatcher(void)
                    "ac cuda dispatcher.  Killing engine.");
         exit(EXIT_FAILURE);
     }
+    SCSetThreadName(tv->name);
+
     if (TmThreadSpawn(tv) != 0) {
         SCLogError(SC_ERR_THREAD_SPAWN, "Failed to spawn thread for "
                    "ac cuda dispatcher.  Killing engine.");

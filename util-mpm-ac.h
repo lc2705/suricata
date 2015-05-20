@@ -172,8 +172,8 @@ static inline void CudaBufferPacket(CudaThreadVars *ctv, Packet *p)
     }
     *((uint64_t *)(slice->buffer + slice->start_offset)) = p->payload_len;
     *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint64_t))) = ((SCACCtx *)(mpm_ctx->ctx))->state_table_u32_cuda;
-    *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint64_t) * 2)) = ((SCACCtx *)(mpm_ctx->ctx))->state_depth_table_cuda;
-	memcpy(slice->buffer + slice->start_offset + sizeof(uint64_t) + sizeof(CUdeviceptr), p->payload, p->payload_len);
+    *((CUdeviceptr *)(slice->buffer + slice->start_offset + sizeof(uint64_t) + sizeof(CUdeviceptr))) = ((SCACCtx *)(mpm_ctx->ctx))->state_depth_table_cuda;
+	memcpy(slice->buffer + slice->start_offset + sizeof(uint64_t) + sizeof(CUdeviceptr) * 2, p->payload, p->payload_len);
 #else
     CudaBufferSlice *slice = CudaBufferGetSlice(ctv->cuda_ac_cb,
                                                 p->payload_len + sizeof(uint32_t) + sizeof(CUdeviceptr) * 2,
